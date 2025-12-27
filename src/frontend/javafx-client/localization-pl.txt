@@ -1,0 +1,64 @@
+# --- LOGOWANIE I REJESTRACJA ---
+app.title=System Biletowy
+login.title=Logowanie
+login.btn=Zaloguj się
+login.register_link=Nie masz konta? Zarejestruj się
+login.status.empty=Wypełnij wszystkie pola!
+login.status.process=Logowanie...
+register.title=Rejestracja
+register.btn=Utwórz konto
+register.back_btn=Wróć do logowania
+register.status.pass_mismatch=Hasła nie są identyczne!
+register.status.process=Tworzenie konta...
+register.success=Konto utworzone! (Symulacja)
+
+# --- DEBUG ---
+debug.user=🛠 [DEBUG] Pomiń jako USER
+debug.admin=🛠 [DEBUG] Pomiń jako ADMIN
+
+# --- MENU I DASHBOARD ---
+menu.offer=🛒 Oferta
+menu.my_tickets=🎟 Moje bilety
+menu.logout=Wyloguj
+dashboard.welcome=Witaj,
+dashboard.available_title=Dostępne wydarzenia:
+dashboard.my_tickets_title=Twoje bilety:
+
+# --- KARTY BILETÓW ---
+ticket.buy_btn=Kup
+ticket.qr_btn=Pokaż QR
+ticket.owned=Posiadasz:
+ticket.available=Dostępne:
+ticket.unit=szt.
+
+# --- PANEL ADMINA ---
+admin.title=Panel Admina:
+admin.subtitle=Dodaj nowe wydarzenie:
+admin.field.name=Nazwa wydarzenia
+admin.field.price=Cena (np. 99.99)
+admin.field.qty=Ilość biletów
+admin.add_btn=➕ Dodaj Bilet
+admin.status.success=Dodano:
+
+# --- OKNO ZAKUPU ---
+buy.title=Potwierdzenie zakupu
+buy.header=Kupujesz bilet na:
+buy.price_single=Cena za sztukę:
+buy.qty_label=Ilość:
+buy.total=Razem:
+buy.checkbox=Przysięgam zapłacić!
+buy.confirm_btn=Potwierdzam zakup
+buy.success=Kupiono
+
+# --- OKNO QR ---
+qr.close_btn=Zamknij
+qr.error=Błąd ładowania QR
+# ... (reszta bez zmian) ...
+
+# --- PROMPTS (PODPOWIEDZI W POLACH) ---
+prompt.login=Login
+prompt.password=Hasło
+prompt.password_confirm=Powtórz hasło
+prompt.event_name=Nazwa wydarzenia
+prompt.price=Cena (np. 99.99)
+prompt.qty=Ilość biletów
