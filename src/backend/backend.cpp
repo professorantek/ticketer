@@ -1,4 +1,4 @@
- // backend.cpp
+// backend.cpp
 // Build (server):  g++ -std=c++20 -O2 -pthread backend.cpp -o server
 // Run:             ./server
 //
@@ -17,13 +17,13 @@
 #include <cctype>
 #include <vector>
 #include <map>
-#include <algorithm>   // std::sort, std::count_if
-#include <thread>      // std::thread
-#include <atomic>      // std::atomic_bool
-#include <chrono>      // std::chrono
-#include <memory>      // std::unique_ptr
-#include <stdexcept>   // std::runtime_error
-#include <cassert>     // unit tests
+#include <algorithm> // std::sort, std::count_if
+#include <thread>    // std::thread
+#include <atomic>    // std::atomic_bool
+#include <chrono>    // std::chrono
+#include <memory>    // std::unique_ptr
+#include <stdexcept> // std::runtime_error
+#include <cassert>   // unit tests
 
 // ======================================================
 // Wymóg: Dynamic allocation + Destructor (non-empty)
@@ -47,6 +47,7 @@ public:
         other.size_ = 0;
         other.data_ = nullptr;
     }
+
     RawBuffer& operator=(RawBuffer&& other) noexcept {
         if (this != &other) {
             delete[] data_;
@@ -188,6 +189,9 @@ public:
     virtual std::vector<Ticket> listAll() const = 0;
     virtual bool existsById(long long id) const = 0;
     virtual std::optional<Ticket> getById(long long id) const = 0;
+
+    // NOWE: update po ID
+    virtual bool updateTicket(long long id, double newPrice, const std::string& newName) = 0;
 };
 
 class IPurchaseRepository {
@@ -239,7 +243,6 @@ public:
     bool addUser(const std::string& login, const std::string& password) override {
         std::lock_guard<std::mutex> lock(mtx_);
 
-        // ponowna walidacja pod lockiem
         if (existsUnlocked(login)) return false;
 
         std::ofstream out(dbPath_, std::ios::app);
@@ -356,9 +359,8 @@ public:
         }
 
         // Wymóg: STL Algorithm (np. sort)
-        std::sort(tickets.begin(), tickets.end(), [](const Ticket& a, const Ticket& b) {
-            return a.id < b.id;
-        });
+        std::sort(tickets.begin(), tickets.end(),
+                  [](const Ticket& a, const Ticket& b) { return a.id < b.id; });
 
         return tickets;
     }
@@ -378,6 +380,42 @@ public:
             if (parseLine(line, t) && t.id == id) return t;
         }
         return std::nullopt;
+    }
+
+    // NOWE: update po ID w pliku ticketsDb.txt
+    bool updateTicket(long long id, double newPrice, const std::string& newName) override {
+        std::lock_guard<std::mutex> lock(mtx_);
+
+        std::ifstream in(dbPath_);
+        if (!in.is_open()) return false;
+
+        std::vector<Ticket> all;
+        all.reserve(256);
+
+        bool updated = false;
+        std::string line;
+        while (std::getline(in, line)) {
+            Ticket t;
+            if (!parseLine(line, t)) continue;
+
+            if (t.id == id) {
+                t.price = newPrice;
+                t.name = newName;
+                updated = true;
+            }
+            all.push_back(t);
+        }
+        in.close();
+
+        if (!updated) return false;
+
+        std::ofstream out(dbPath_, std::ios::trunc);
+        if (!out.is_open()) throw std::runtime_error("Cannot open tickets db file for rewriting");
+
+        for (const auto& t : all) {
+            out << t.id << " " << t.price << " " << t.name << "\n";
+        }
+        return true;
     }
 
 private:
@@ -442,7 +480,7 @@ public:
         out.reserve(countsMap.size());
         for (const auto& kv : countsMap) out.push_back(kv);
 
-        // Wymóg: STL Algorithm - np. count_if (tu demonstracyjnie, bez wpływu na logikę)
+        // Wymóg: STL Algorithm - np. count_if (tu demonstracyjnie)
         (void)std::count_if(out.begin(), out.end(), [](const auto& kv) { return kv.second > 0; });
 
         return out;
@@ -522,6 +560,9 @@ public:
     enum class CreateResult { Ok, InvalidInput, Forbidden, StorageError };
     enum class DeleteResult { Ok, NotFound, Forbidden, InvalidInput, StorageError };
 
+    // NOWE: wynik dla update
+    enum class UpdateResult { Ok, NotFound, Forbidden, InvalidInput, StorageError };
+
     CreateResult createTicket(const std::string& adminPassword, double price, const std::string& name, long long& outId) {
         if (adminPassword != kAdminPassword) return CreateResult::Forbidden;
         if (name.empty() || name.size() > 100) return CreateResult::InvalidInput;
@@ -545,6 +586,21 @@ public:
             return ok ? DeleteResult::Ok : DeleteResult::NotFound;
         } catch (...) {
             return DeleteResult::StorageError;
+        }
+    }
+
+    // NOWE: update biletu w repo
+    UpdateResult updateTicket(const std::string& adminPassword, long long id, double newPrice, const std::string& newName) {
+        if (adminPassword != kAdminPassword) return UpdateResult::Forbidden;
+        if (id <= 0) return UpdateResult::InvalidInput;
+        if (newName.empty() || newName.size() > 100) return UpdateResult::InvalidInput;
+        if (!(newPrice > 0.0) || newPrice > 1'000'000.0) return UpdateResult::InvalidInput;
+
+        try {
+            bool ok = repo_.updateTicket(id, newPrice, newName);
+            return ok ? UpdateResult::Ok : UpdateResult::NotFound;
+        } catch (...) {
+            return UpdateResult::StorageError;
         }
     }
 
@@ -587,7 +643,6 @@ public:
                 long long newPurchaseId = purchaseRepo_.generateNextPurchaseId();
                 purchaseRepo_.addPurchase(Purchase{newPurchaseId, ticketId, login});
             }
-
             return PurchaseResult::Ok;
         } catch (...) {
             return PurchaseResult::StorageError;
@@ -761,6 +816,38 @@ public:
             }
         });
 
+        // NOWE: POST /tickets/update
+        // {"adminPassword":"12345","id":1,"name":"Nowa nazwa","price":199.99}
+        server.Post("/tickets/update", [this](const httplib::Request& req, httplib::Response& res) {
+            auto adminOpt = extractJsonStringField(req.body, "adminPassword");
+            auto idOpt    = extractJsonIntField(req.body, "id");
+            auto nameOpt  = extractJsonStringField(req.body, "name");
+            auto priceOpt = extractJsonNumberField(req.body, "price");
+
+            if (!adminOpt || !idOpt || !nameOpt || !priceOpt) {
+                res.status = 400;
+                res.set_content(
+                    "Invalid JSON. Expected {\"adminPassword\":\"12345\",\"id\":...,\"price\":...,\"name\":\"...\"}",
+                    "text/plain; charset=utf-8"
+                );
+                return;
+            }
+
+            auto result = service_.updateTicket(*adminOpt, *idOpt, *priceOpt, *nameOpt);
+            switch (result) {
+                case TicketService::UpdateResult::Ok:
+                    res.status = 200; res.set_content("Ticket updated", "text/plain; charset=utf-8"); break;
+                case TicketService::UpdateResult::NotFound:
+                    res.status = 404; res.set_content("Ticket not found", "text/plain; charset=utf-8"); break;
+                case TicketService::UpdateResult::Forbidden:
+                    res.status = 403; res.set_content("Forbidden", "text/plain; charset=utf-8"); break;
+                case TicketService::UpdateResult::InvalidInput:
+                    res.status = 400; res.set_content("Invalid id/price/name", "text/plain; charset=utf-8"); break;
+                default:
+                    res.status = 500; res.set_content("Storage error", "text/plain; charset=utf-8"); break;
+            }
+        });
+
         // GET /tickets
         server.Get("/tickets", [this](const httplib::Request&, httplib::Response& res) {
             auto tickets = service_.getAllTickets();
@@ -785,12 +872,16 @@ public:
             long long id = 0;
             try { id = std::stoll(req.matches[1].str()); }
             catch (...) {
-                res.status = 400; res.set_content("Invalid ticket id", "text/plain; charset=utf-8"); return;
+                res.status = 400;
+                res.set_content("Invalid ticket id", "text/plain; charset=utf-8");
+                return;
             }
 
             auto tOpt = service_.getTicketById(id);
             if (!tOpt) {
-                res.status = 404; res.set_content("Ticket not found", "text/plain; charset=utf-8"); return;
+                res.status = 404;
+                res.set_content("Ticket not found", "text/plain; charset=utf-8");
+                return;
             }
 
             std::string json = "{";
@@ -931,7 +1022,6 @@ public:
         worker_ = std::thread([this]() {
             while (running_.load()) {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
-                // minimalny “heartbeat” — możesz rozbudować o statystyki
                 std::cerr << "[diag] server alive\n";
             }
         });
@@ -961,33 +1051,27 @@ public:
     AppServer(std::string host, int port)
         : host_(std::move(host)),
           port_(port),
-          scratch_(1024)  // RawBuffer -> dynamic allocation
+          scratch_(1024) // RawBuffer -> dynamic allocation
     {}
 
     void start() {
-        // start background worker (parallel programming)
         bg_.start();
 
-        // Repozytoria przez interfejsy (polymorphism) + smart pointers (dynamic allocation)
         userRepo_     = std::make_unique<FileUserRepository>("dbUsers.txt");
         ticketRepo_   = std::make_unique<FileTicketRepository>("ticketsDb.txt");
         purchaseRepo_ = std::make_unique<FilePurchaseRepository>("purchasesDb.txt");
 
-        // Serwisy
-        authService_    = std::make_unique<AuthService>(*userRepo_);
-        ticketService_  = std::make_unique<TicketService>(*ticketRepo_);
-        purchaseService_= std::make_unique<PurchaseService>(*userRepo_, *ticketRepo_, *purchaseRepo_);
+        authService_     = std::make_unique<AuthService>(*userRepo_);
+        ticketService_   = std::make_unique<TicketService>(*ticketRepo_);
+        purchaseService_ = std::make_unique<PurchaseService>(*userRepo_, *ticketRepo_, *purchaseRepo_);
 
-        // Kontrolery
-        authController_    = std::make_unique<AuthController>(*authService_);
-        ticketController_  = std::make_unique<TicketController>(*ticketService_);
-        purchaseController_= std::make_unique<PurchaseController>(*purchaseService_);
+        authController_     = std::make_unique<AuthController>(*authService_);
+        ticketController_   = std::make_unique<TicketController>(*ticketService_);
+        purchaseController_ = std::make_unique<PurchaseController>(*purchaseService_);
 
-        // Random
-        randomService_   = std::make_unique<RandomNumberService>();
-        randomController_= std::make_unique<RandomController>(*randomService_);
+        randomService_    = std::make_unique<RandomNumberService>();
+        randomController_ = std::make_unique<RandomController>(*randomService_);
 
-        // Rejestracja tras
         randomController_->registerRoutes(server_);
         authController_->registerRoutes(server_);
         ticketController_->registerRoutes(server_);
@@ -1000,6 +1084,7 @@ public:
         std::cout << "POST /user/get\n";
         std::cout << "POST /tickets/create\n";
         std::cout << "POST /tickets/delete\n";
+        std::cout << "POST /tickets/update\n";
         std::cout << "GET  /tickets\n";
         std::cout << "GET  /tickets/{id}\n";
         std::cout << "POST /purchase\n";
@@ -1007,7 +1092,6 @@ public:
 
         server_.listen(host_.c_str(), port_);
 
-        // po zakończeniu listen() — stop worker
         bg_.stop();
     }
 
@@ -1016,39 +1100,32 @@ private:
     int port_;
     httplib::Server server_;
 
-    RawBuffer scratch_;         // wymóg: new + destructor
-    BackgroundWorker bg_;       // wymóg: std::thread
+    RawBuffer scratch_;
+    BackgroundWorker bg_;
 
-    // Repozytoria (polymorphism przez interfejs)
     std::unique_ptr<IUserRepository> userRepo_;
     std::unique_ptr<ITicketRepository> ticketRepo_;
     std::unique_ptr<IPurchaseRepository> purchaseRepo_;
 
-    // Serwisy
     std::unique_ptr<AuthService> authService_;
     std::unique_ptr<TicketService> ticketService_;
     std::unique_ptr<PurchaseService> purchaseService_;
 
-    // Kontrolery
     std::unique_ptr<AuthController> authController_;
     std::unique_ptr<TicketController> ticketController_;
     std::unique_ptr<PurchaseController> purchaseController_;
 
-    // Random
     std::unique_ptr<RandomNumberService> randomService_;
     std::unique_ptr<RandomController> randomController_;
 };
 
 // ======================================================
-// Unit tests (wymóg 3 pt) — minimalny zestaw
-// Uruchamiasz: g++ ... -DUNIT_TESTS
+// Unit tests — minimalny zestaw
 // ======================================================
 #ifdef UNIT_TESTS
 
 static void run_tests() {
-    // repozytoria na plikach testowych
     {
-        // cleanup test files
         std::ofstream("users_test.txt", std::ios::trunc).close();
         std::ofstream("tickets_test.txt", std::ios::trunc).close();
         std::ofstream("purchases_test.txt", std::ios::trunc).close();
@@ -1057,7 +1134,6 @@ static void run_tests() {
     FileUserRepository users("users_test.txt");
     AuthService auth(users);
 
-    // register + login
     assert(auth.registerUser("jan", "haslo123") == AuthService::RegisterResult::Ok);
     assert(auth.loginUser("jan", "haslo123") == AuthService::LoginResult::Ok);
     assert(auth.loginUser("jan", "zle") == AuthService::LoginResult::InvalidCredentials);
@@ -1073,16 +1149,21 @@ static void run_tests() {
     assert(ticketSvc.createTicket("12345", 50.0, "Mecz", id2) == TicketService::CreateResult::Ok);
     assert(id2 == 2);
 
+    // update ticket (NOWE)
+    assert(ticketSvc.updateTicket("12345", 2, 60.0, "Mecz Updated") == TicketService::UpdateResult::Ok);
+    auto t2 = ticketSvc.getTicketById(2);
+    assert(t2.has_value());
+    assert(t2->price == 60.0);
+    assert(t2->name == "Mecz Updated");
+
     FilePurchaseRepository purchases("purchases_test.txt");
     PurchaseService purchaseSvc(users, tickets, purchases);
 
-    // purchase
     assert(purchaseSvc.purchase(2, "jan", "haslo123", 3) == PurchaseService::PurchaseResult::Ok);
 
     std::vector<std::pair<long long, long long>> counts;
     assert(purchaseSvc.listUserTickets("jan", "haslo123", counts) == PurchaseService::ListResult::Ok);
 
-    // powinno być ticketId=2 qty=3
     assert(counts.size() == 1);
     assert(counts[0].first == 2);
     assert(counts[0].second == 3);
