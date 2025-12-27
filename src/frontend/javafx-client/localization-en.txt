@@ -1,0 +1,64 @@
+# --- LOGIN & REGISTER ---
+app.title=Ticket System
+login.title=Login
+login.btn=Log in
+login.register_link=Don't have an account? Register
+login.status.empty=Please fill all fields!
+login.status.process=Logging in...
+register.title=Register
+register.btn=Create account
+register.back_btn=Back to login
+register.status.pass_mismatch=Passwords do not match!
+register.status.process=Creating account...
+register.success=Account created! (Simulation)
+
+# --- DEBUG ---
+debug.user=🛠 [DEBUG] Skip as USER
+debug.admin=🛠 [DEBUG] Skip as ADMIN
+
+# --- MENU & DASHBOARD ---
+menu.offer=🛒 Offer
+menu.my_tickets=🎟 My Tickets
+menu.logout=Logout
+dashboard.welcome=Welcome,
+dashboard.available_title=Available Events:
+dashboard.my_tickets_title=Your Tickets:
+
+# --- TICKET CARDS ---
+ticket.buy_btn=Buy
+ticket.qr_btn=Show QR
+ticket.owned=Owned:
+ticket.available=Available:
+ticket.unit=pcs.
+
+# --- ADMIN PANEL ---
+admin.title=Admin Panel:
+admin.subtitle=Add new event:
+admin.field.name=Event Name
+admin.field.price=Price (e.g. 99.99)
+admin.field.qty=Ticket Quantity
+admin.add_btn=➕ Add Ticket
+admin.status.success=Added:
+
+# --- BUY WINDOW ---
+buy.title=Purchase Confirmation
+buy.header=Buying ticket for:
+buy.price_single=Price per unit:
+buy.qty_label=Quantity:
+buy.total=Total:
+buy.checkbox=I swear to pay!
+buy.confirm_btn=Confirm Purchase
+buy.success=Bought
+
+# --- QR WINDOW ---
+qr.close_btn=Close
+qr.error=QR Loading Error
+# ... (reszta bez zmian) ...
+
+# --- PROMPTS ---
+prompt.login=Username
+prompt.password=Password
+prompt.password_confirm=Repeat password
+prompt.event_name=Event Name
+prompt.price=Price (e.g. 99.99)
+prompt.qty=Ticket Quantity
