@@ -50,14 +50,14 @@ final class ApiResult<T> {
     private final T data;
     private final String error;
 
-    public ApiResult(boolean ok, int statusCode, T data, String error) { // non-empty constructor
+    public ApiResult(boolean ok, int statusCode, T data, String error) {
         this.ok = ok;
         this.statusCode = statusCode;
         this.data = data;
         this.error = error;
     }
 
-    public static <T> ApiResult<T> success(int code, T data) { // generic method
+    public static <T> ApiResult<T> success(int code, T data) {
         return new ApiResult<>(true, code, data, "");
     }
 
@@ -78,38 +78,35 @@ record TicketDto(long id, double price, String name) {}
 record UserTicketCountDto(long idBiletu, long quantity) {}
 
 // ==========================================
-// INTERFACE (1 pkt) -> Polymorphism base
+// INTERFACE (1 pkt)
 // ==========================================
 interface BackendApi {
     CompletableFuture<ApiResult<Void>> login(String login, String password);
     CompletableFuture<ApiResult<Void>> register(String login, String password);
-
     CompletableFuture<ApiResult<List<TicketDto>>> getTickets();
     CompletableFuture<ApiResult<Void>> purchase(long ticketId, long quantity, String login, String password);
     CompletableFuture<ApiResult<List<UserTicketCountDto>>> getUserTickets(String login, String password);
+    CompletableFuture<ApiResult<Void>> createTicket(String name, double price, String adminPassword);
 }
 
 // ==========================================
-// ABSTRACT CLASS (1 pkt) + shared error handling
+// ABSTRACT CLASS (1 pkt)
 // ==========================================
 abstract class AbstractBackendApi implements BackendApi {
     protected final String baseUrl;
 
-    protected AbstractBackendApi(String baseUrl) { // non-empty constructor
+    protected AbstractBackendApi(String baseUrl) {
         this.baseUrl = baseUrl;
     }
 
-    protected void logError(String msg, Throwable t) { // error handling
+    protected void logError(String msg, Throwable t) {
         System.err.println("[BackendApi] " + msg);
         if (t != null) t.printStackTrace();
     }
 }
 
 // ==========================================
-// REAL HTTP IMPLEMENTATION (polymorphism)
-// ==========================================
-// ==========================================
-// REAL HTTP IMPLEMENTATION (polymorphism)
+// REAL HTTP IMPLEMENTATION
 // ==========================================
 final class HttpBackendApi extends AbstractBackendApi {
     private final HttpClient client;
@@ -130,11 +127,10 @@ final class HttpBackendApi extends AbstractBackendApi {
 
         return client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
                 .thenApply(resp -> resp.statusCode() == 200
-                        // POPRAWKA: Jawnie podajemy <Void>
                         ? ApiResult.<Void>success(resp.statusCode(), null)
                         : ApiResult.<Void>failure(resp.statusCode(), resp.body()))
                 .exceptionally(ex -> {
-                    logError("Login failed (network)", ex);
+                    logError("Login failed", ex);
                     return ApiResult.<Void>failure(0, "Network error");
                 });
     }
@@ -150,11 +146,10 @@ final class HttpBackendApi extends AbstractBackendApi {
 
         return client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
                 .thenApply(resp -> resp.statusCode() == 201
-                        // POPRAWKA: Jawnie podajemy <Void>
                         ? ApiResult.<Void>success(resp.statusCode(), null)
                         : ApiResult.<Void>failure(resp.statusCode(), resp.body()))
                 .exceptionally(ex -> {
-                    logError("Register failed (network)", ex);
+                    logError("Register failed", ex);
                     return ApiResult.<Void>failure(0, "Network error");
                 });
     }
@@ -168,7 +163,7 @@ final class HttpBackendApi extends AbstractBackendApi {
 
         return client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
                 .thenApply(resp -> {
-                    if (resp.statusCode() != 200) 
+                    if (resp.statusCode() != 200)
                         return ApiResult.<List<TicketDto>>failure(resp.statusCode(), resp.body());
 
                     List<String> items = Main.SimpleJsonParser.parseArray(resp.body());
@@ -186,7 +181,7 @@ final class HttpBackendApi extends AbstractBackendApi {
                     return ApiResult.<List<TicketDto>>success(resp.statusCode(), out);
                 })
                 .exceptionally(ex -> {
-                    logError("Get tickets failed (network)", ex);
+                    logError("Get tickets failed", ex);
                     return ApiResult.<List<TicketDto>>failure(0, "Network error");
                 });
     }
@@ -205,16 +200,13 @@ final class HttpBackendApi extends AbstractBackendApi {
 
         return client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
                 .thenApply(resp -> resp.statusCode() == 201
-                        // POPRAWKA: Jawnie podajemy <Void>
                         ? ApiResult.<Void>success(resp.statusCode(), null)
                         : ApiResult.<Void>failure(resp.statusCode(), resp.body()))
                 .exceptionally(ex -> {
-                    logError("Purchase failed (network)", ex);
+                    logError("Purchase failed", ex);
                     return ApiResult.<Void>failure(0, "Network error");
                 });
     }
-    
-    // PAMIĘTAJ DODAĆ TO JEŚLI UŻYWASZ ADMINA W NOWYM API
 
     @Override
     public CompletableFuture<ApiResult<List<UserTicketCountDto>>> getUserTickets(String login, String password) {
@@ -228,7 +220,7 @@ final class HttpBackendApi extends AbstractBackendApi {
 
         return client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
                 .thenApply(resp -> {
-                    if (resp.statusCode() != 200) 
+                    if (resp.statusCode() != 200)
                         return ApiResult.<List<UserTicketCountDto>>failure(resp.statusCode(), resp.body());
 
                     List<String> items = Main.SimpleJsonParser.parseArray(resp.body());
@@ -245,17 +237,40 @@ final class HttpBackendApi extends AbstractBackendApi {
                     return ApiResult.<List<UserTicketCountDto>>success(resp.statusCode(), out);
                 })
                 .exceptionally(ex -> {
-                    logError("Get user tickets failed (network)", ex);
+                    logError("Get user tickets failed", ex);
                     return ApiResult.<List<UserTicketCountDto>>failure(0, "Network error");
+                });
+    }
+
+    @Override
+    public CompletableFuture<ApiResult<Void>> createTicket(String name, double price, String adminPassword) {
+        String json = String.format(Locale.US,
+                "{\"adminPassword\":\"%s\", \"name\":\"%s\", \"price\":%f}",
+                adminPassword, name, price
+        );
+
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/tickets/create"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+        return client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
+                .thenApply(resp -> resp.statusCode() == 201
+                        ? ApiResult.<Void>success(resp.statusCode(), null)
+                        : ApiResult.<Void>failure(resp.statusCode(), resp.body()))
+                .exceptionally(ex -> {
+                    logError("Create ticket failed", ex);
+                    return ApiResult.<Void>failure(0, "Network error");
                 });
     }
 }
 
 // ==========================================
-// OPTIONAL MOCK IMPLEMENTATION (more polymorphism)
+// OPTIONAL MOCK IMPLEMENTATION
 // ==========================================
 final class MockBackendApi extends AbstractBackendApi {
-    public MockBackendApi() { super("mock://"); } // non-empty constructor
+    public MockBackendApi() { super("mock://"); }
 
     @Override public CompletableFuture<ApiResult<Void>> login(String login, String password) {
         return CompletableFuture.completedFuture(ApiResult.success(200, null));
@@ -274,65 +289,63 @@ final class MockBackendApi extends AbstractBackendApi {
         return CompletableFuture.completedFuture(ApiResult.success(200,
                 List.of(new UserTicketCountDto(1, 2), new UserTicketCountDto(2, 1))));
     }
+    @Override public CompletableFuture<ApiResult<Void>> createTicket(String name, double price, String adminPassword) {
+        return CompletableFuture.completedFuture(ApiResult.success(201, null));
+    }
 }
 
 // ==========================================
-// "DESTRUCTOR" STYLE: AutoCloseable + close resources
+// APP RESOURCES
 // ==========================================
 final class AppResources implements AutoCloseable {
     private final ExecutorService executor;
 
-    public AppResources() { // non-empty constructor
+    public AppResources() {
         this.executor = Executors.newFixedThreadPool(4);
     }
 
     public ExecutorService executor() { return executor; }
 
     @Override
-    public void close() { // destructor equivalent
+    public void close() {
         executor.shutdownNow();
-        System.err.println("[AppResources] executor shutdown");
     }
 }
 
 // ==========================================
-// MAIN APP (Inheritance + @Override)
+// MAIN APP
 // ==========================================
 public class Main extends Application {
 
     private Stage primaryStage;
-
     private AppResources resources;
-    private BackendApi api; // interface => polymorphism
-
+    private BackendApi api;
     private final LocalizationManager loc = new LocalizationManager();
 
-    // --- KONFIGURACJA BACKENDU ---
+    // --- CONFIG ---
     private static final String API_BASE = "http://127.0.0.1:8080";
-    private static final String HARDCODED_ADMIN_PASS = "12345";
+    private static final String HARDCODED_ADMIN_PASS = "12345"; // Backend admin pass
 
-    // --- STAN APLIKACJI ---
-    private enum ViewType { LOGIN, REGISTER, USER_DASHBOARD, ADMIN_DASHBOARD } // enum (1 pkt)
+    // --- LOCAL ADMIN CREDENTIALS ---
+    private static final String LOCAL_ADMIN_LOGIN = "admin";
+    private static final String LOCAL_ADMIN_PASS = "12345";
+
+    private enum ViewType { LOGIN, REGISTER, USER_DASHBOARD, ADMIN_DASHBOARD }
     private ViewType currentViewType = ViewType.LOGIN;
 
     private String currentLogin = "";
     private String currentPassword = "";
 
-    // Collections (Map) (1 pkt)
     private final Map<Integer, String> ticketNameCache = new HashMap<>();
 
-    // ==========================================
-    // HELPER: PROSTY PARSER JSON
-    // ==========================================
+    // --- JSON HELPER ---
     public static class SimpleJsonParser {
         public static String getValue(String json, String key) {
             Pattern pattern = Pattern.compile("\"" + key + "\"\\s*:\\s*(\"[^\"]*\"|[\\d\\.]+|true|false)");
             Matcher matcher = pattern.matcher(json);
             if (matcher.find()) {
                 String val = matcher.group(1);
-                if (val.startsWith("\"") && val.endsWith("\"")) {
-                    return val.substring(1, val.length() - 1);
-                }
+                if (val.startsWith("\"") && val.endsWith("\"")) return val.substring(1, val.length() - 1);
                 return val;
             }
             return "";
@@ -341,17 +354,14 @@ public class Main extends Application {
         public static List<String> parseArray(String jsonArray) {
             List<String> items = new ArrayList<>();
             if (jsonArray == null || !jsonArray.trim().startsWith("[")) return items;
-
             String content = jsonArray.trim();
             if (content.length() < 2) return items;
             content = content.substring(1, content.length() - 1);
-
             int braceCount = 0;
             StringBuilder current = new StringBuilder();
             for (char c : content.toCharArray()) {
                 if (c == '{') braceCount++;
                 if (c == '}') braceCount--;
-
                 if (c == ',' && braceCount == 0) {
                     items.add(current.toString());
                     current = new StringBuilder();
@@ -364,19 +374,14 @@ public class Main extends Application {
         }
     }
 
-    // ==========================================
-    // KLASA DO OBSŁUGI LOKALIZACJI (File read + error handling)
-    // ==========================================
+    // --- LOCALIZATION HELPER ---
     public static class LocalizationManager {
         private final Map<String, String> translations = new HashMap<>();
 
         public void loadFromFile(String filename) {
             translations.clear();
             File file = new File(filename);
-            if (!file.exists()) {
-                System.err.println("[Localization] Missing file: " + filename);
-                return;
-            }
+            if (!file.exists()) return;
             try (BufferedReader reader = new BufferedReader(new FileReader(file, StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
@@ -384,10 +389,7 @@ public class Main extends Application {
                     String[] parts = line.split("=", 2);
                     if (parts.length == 2) translations.put(parts[0].trim(), parts[1].trim());
                 }
-            } catch (Exception e) {
-                System.err.println("[Localization] Failed to load file: " + filename);
-                e.printStackTrace();
-            }
+            } catch (Exception e) { e.printStackTrace(); }
         }
 
         public String get(String key) {
@@ -395,19 +397,13 @@ public class Main extends Application {
         }
     }
 
-    // ==========================================
-    // START / STOP (override + "destructor" via close)
-    // ==========================================
+    // --- START / STOP ---
     private VBox userDashboardContent;
 
     @Override
-    public void start(Stage stage) { // overridden method
-        this.resources = new AppResources(); // constructor non-empty
-
-        // Polymorphism: interchangeably use HttpBackendApi or MockBackendApi
+    public void start(Stage stage) {
+        this.resources = new AppResources();
         this.api = new HttpBackendApi(API_BASE, resources.executor());
-        // this.api = new MockBackendApi();
-
         loc.loadFromFile("localization-pl.txt");
 
         this.primaryStage = stage;
@@ -417,19 +413,13 @@ public class Main extends Application {
     }
 
     @Override
-    public void stop() { // overridden method (cleanup)
-        try {
-            if (resources != null) resources.close();
-        } catch (Exception e) {
-            System.err.println("Failed to close resources");
-            e.printStackTrace();
-        }
+    public void stop() {
+        if (resources != null) resources.close();
     }
 
     private void switchLanguage(String langCode) {
         if ("EN".equals(langCode)) loc.loadFromFile("localization-en.txt");
         else loc.loadFromFile("localization-pl.txt");
-
         primaryStage.setTitle(loc.get("app.title"));
         switch (currentViewType) {
             case LOGIN -> showLoginView();
@@ -454,20 +444,17 @@ public class Main extends Application {
         Button goToRegisterBtn = new Button(loc.get("login.register_link"));
         styleLinkButton(goToRegisterBtn);
 
-        Button debugUserBtn = new Button(loc.get("debug.user"));
-        debugUserBtn.setStyle("-fx-background-color: #ef4444; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand; -fx-background-radius: 8;");
-        debugUserBtn.setMaxWidth(Double.MAX_VALUE);
-        debugUserBtn.setOnAction(e -> {
-            currentLogin = "developer";
-            currentPassword = "dev";
-            showUserDashboard("developer");
-        });
+        // --- PRZYCISK ADMINISTRATORA (NOWOŚĆ) ---
+        // Zamiast przycisków debug, mamy przycisk wejścia do panelu przez lokalne hasło
+        Button adminPanelBtn = new Button("Panel Administratora");
+        adminPanelBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #555; -fx-font-weight: bold; -fx-cursor: hand; -fx-border-color: #ccc; -fx-border-radius: 5;");
+        adminPanelBtn.setOnAction(e -> showLocalAdminLoginWindow());
 
-        VBox debugBox = new VBox(10, debugUserBtn);
-        debugBox.setAlignment(Pos.CENTER);
-        debugBox.setPadding(new Insets(10, 0, 0, 0));
+        VBox adminBox = new VBox(10, adminPanelBtn);
+        adminBox.setAlignment(Pos.CENTER);
+        adminBox.setPadding(new Insets(20, 0, 0, 0));
 
-        // --- LOGIN ACTION (uses BackendApi -> polymorphism) ---
+        // --- LOGIN ACTION (BACKEND) ---
         loginBtn.setOnAction(e -> {
             String login = loginField.getText();
             String pass = passField.getText();
@@ -486,12 +473,7 @@ public class Main extends Application {
                 if (result.isOk()) {
                     currentLogin = login;
                     currentPassword = pass;
-
-                    if ("admin".equalsIgnoreCase(login)) {
-                        showAdminDashboard(login);
-                    } else {
-                        showUserDashboard(login);
-                    }
+                    showUserDashboard(login);
                 } else {
                     statusLabel.setTextFill(Color.RED);
                     statusLabel.setText("Błąd: " + result.getStatusCode() + " (" + result.getError() + ")");
@@ -500,8 +482,54 @@ public class Main extends Application {
         });
 
         goToRegisterBtn.setOnAction(e -> showRegisterView());
-        VBox layout = createBaseLayout(title, loginField, passField, loginBtn, statusLabel, goToRegisterBtn, debugBox);
+        VBox layout = createBaseLayout(title, loginField, passField, loginBtn, statusLabel, goToRegisterBtn, adminBox);
         primaryStage.setScene(new Scene(layout, 420, 600));
+    }
+
+    // ==========================================
+    // NOWE OKNO: LOKALNE LOGOWANIE ADMINA
+    // ==========================================
+    private void showLocalAdminLoginWindow() {
+        Stage adminStage = new Stage();
+        adminStage.initModality(Modality.APPLICATION_MODAL);
+        adminStage.setTitle("Logowanie Administratora");
+
+        Label header = new Label("Dostęp do panelu administratora");
+        header.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
+
+        TextField loginField = createStyledTextField("Login");
+        PasswordField passField = createStyledPasswordField("Hasło");
+        Label statusLabel = createStyledLabel("", 12);
+
+        Button confirmBtn = new Button("Zaloguj");
+        confirmBtn.setStyle("-fx-background-color: #be123c; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 8; -fx-cursor: hand;");
+        confirmBtn.setPrefWidth(200);
+
+        confirmBtn.setOnAction(e -> {
+            String l = loginField.getText();
+            String p = passField.getText();
+
+            // SPRAWDZAMY LOKALNIE
+            if (LOCAL_ADMIN_LOGIN.equals(l) && LOCAL_ADMIN_PASS.equals(p)) {
+                adminStage.close();
+                // Ustawiamy te dane jako sesja, bo są też potrzebne do wysyłania requestów do backendu (jako adminPassword)
+                currentLogin = l;
+                currentPassword = p;
+                showAdminDashboard(l);
+            } else {
+                statusLabel.setTextFill(Color.RED);
+                statusLabel.setText("Błędne dane lokalne!");
+            }
+        });
+
+        VBox layout = new VBox(15, header, loginField, passField, confirmBtn, statusLabel);
+        layout.setAlignment(Pos.CENTER);
+        layout.setPadding(new Insets(30));
+        layout.setStyle("-fx-background-color: white;");
+
+        Scene scene = new Scene(layout, 300, 350);
+        adminStage.setScene(scene);
+        adminStage.show();
     }
 
     // ==========================================
@@ -601,7 +629,6 @@ public class Main extends Application {
         primaryStage.setScene(new Scene(layout, 420, 600));
     }
 
-    // --- POBIERANIE DOSTĘPNYCH BILETÓW ---
     private void loadAvailableTickets() {
         userDashboardContent.getChildren().clear();
         Label title = new Label(loc.get("dashboard.available_title"));
@@ -635,7 +662,6 @@ public class Main extends Application {
         }));
     }
 
-    // --- POBIERANIE MOICH BILETÓW ---
     private void loadMyTickets() {
         userDashboardContent.getChildren().clear();
         Label title = new Label(loc.get("dashboard.my_tickets_title"));
@@ -699,7 +725,7 @@ public class Main extends Application {
             showLoginView();
         });
 
-        // ADMIN: pozostaje po staremu (wywołanie bezpośrednie HTTP), bo to nie jest wymagane do punktów OOP
+        // --- CREATE TICKET ACTION (uses BackendApi) ---
         addBtn.setOnAction(e -> {
             String name = eventNameField.getText();
             String priceStr = priceField.getText();
@@ -714,53 +740,33 @@ public class Main extends Application {
             statusLabel.setText("Wysyłanie...");
             statusLabel.setTextFill(Color.BLACK);
 
-            String safePrice = priceStr.replace(",", ".");
-            String json = String.format(Locale.US,
-                    "{\"adminPassword\":\"%s\", \"name\":\"%s\", \"price\":%s}",
-                    HARDCODED_ADMIN_PASS, name, safePrice
-            );
-
+            double priceVal;
             try {
-                HttpClient tmpClient = HttpClient.newHttpClient();
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(API_BASE + "/tickets/create"))
-                        .header("Content-Type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(json))
-                        .build();
-
-                tmpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                        .thenAccept(resp -> Platform.runLater(() -> {
-                            addBtn.setDisable(false);
-                            if (resp.statusCode() == 201) {
-                                statusLabel.setTextFill(Color.GREEN);
-                                statusLabel.setText(loc.get("admin.status.success") + " " + name);
-                                eventNameField.clear();
-                                priceField.clear();
-                            } else if (resp.statusCode() == 403) {
-                                statusLabel.setTextFill(Color.RED);
-                                statusLabel.setText("Brak uprawnień (złe hasło admina).");
-                            } else {
-                                statusLabel.setTextFill(Color.RED);
-                                statusLabel.setText("Błąd: " + resp.statusCode());
-                            }
-                        }))
-                        .exceptionally(ex -> {
-                            Platform.runLater(() -> {
-                                addBtn.setDisable(false);
-                                statusLabel.setTextFill(Color.RED);
-                                statusLabel.setText("Błąd połączenia.");
-                            });
-                            System.err.println("Admin create ticket failed");
-                            ex.printStackTrace();
-                            return null;
-                        });
-            } catch (Exception ex) {
-                addBtn.setDisable(false);
+                priceVal = Double.parseDouble(priceStr.replace(",", "."));
+            } catch (NumberFormatException ex) {
                 statusLabel.setTextFill(Color.RED);
-                statusLabel.setText("Błąd wewnętrzny.");
-                System.err.println("Admin create ticket exception");
-                ex.printStackTrace();
+                statusLabel.setText("Błędny format ceny");
+                addBtn.setDisable(false);
+                return;
             }
+
+            // Używamy hasła z sesji (currentPassword), które musi być '12345'
+            api.createTicket(name, priceVal, currentPassword)
+                    .thenAccept(result -> Platform.runLater(() -> {
+                        addBtn.setDisable(false);
+                        if (result.isOk()) {
+                            statusLabel.setTextFill(Color.GREEN);
+                            statusLabel.setText(loc.get("admin.status.success") + " " + name);
+                            eventNameField.clear();
+                            priceField.clear();
+                        } else if (result.getStatusCode() == 403) {
+                            statusLabel.setTextFill(Color.RED);
+                            statusLabel.setText("Brak uprawnień (złe hasło admina).");
+                        } else {
+                            statusLabel.setTextFill(Color.RED);
+                            statusLabel.setText("Błąd: " + result.getStatusCode());
+                        }
+                    }));
         });
 
         VBox formBox = new VBox(10, subTitle, eventNameField, priceField, addBtn, statusLabel);
@@ -800,8 +806,6 @@ public class Main extends Application {
             String cleanPrice = priceString.replace(" PLN", "").replace(",", ".").trim();
             singlePrice = Double.parseDouble(cleanPrice);
         } catch (Exception e) {
-            System.err.println("Failed to parse price: " + priceString);
-            e.printStackTrace();
             singlePrice = 0.0;
         }
         final double finalSinglePrice = singlePrice;
@@ -820,7 +824,6 @@ public class Main extends Application {
 
         Label statusLabel = new Label("");
 
-        // --- AKCJA KUPNA (uses BackendApi) ---
         confirmBtn.setOnAction(e -> {
             int quantityToBuy = quantitySpinner.getValue();
             confirmBtn.setDisable(true);
@@ -835,7 +838,7 @@ public class Main extends Application {
                             }, 1000);
                         } else {
                             statusLabel.setStyle("-fx-text-fill: red;");
-                            statusLabel.setText("Błąd: " + result.getStatusCode() + " (" + result.getError() + ")");
+                            statusLabel.setText("Błąd: " + result.getStatusCode());
                             confirmBtn.setDisable(false);
                         }
                     }));
@@ -863,8 +866,6 @@ public class Main extends Application {
             Image image = new Image(apiUrl, true);
             qrImage.setImage(image);
         } catch (Exception e) {
-            System.err.println("QR image load failed");
-            e.printStackTrace();
             header.setText(loc.get("qr.error"));
         }
 
@@ -880,9 +881,6 @@ public class Main extends Application {
         qrStage.show();
     }
 
-    // ==========================================
-    // STYLE I HELPERY (encapsulation)
-    // ==========================================
     private VBox createBaseLayout(javafx.scene.Node... children) {
         Button btnPL = new Button("PL");
         Button btnEN = new Button("EN");
@@ -915,7 +913,7 @@ public class Main extends Application {
 
         VBox infoBox = new VBox(5);
         Label nameLbl = new Label(eventName);
-        nameLbl.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
+        nameLbl.setStyle("-fx-text-fill: #666; -fx-font-size: 14px;");
         Label priceLbl = new Label(priceInfo);
         priceLbl.setStyle("-fx-text-fill: #666; -fx-font-size: 12px;");
 
