@@ -12,6 +12,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -37,26 +41,284 @@ import javafx.scene.paint.Color;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 
+// ==========================================
+// GENERIC CLASS (3 pkt) + generic methods
+// ==========================================
+final class ApiResult<T> {
+    private final boolean ok;
+    private final int statusCode;
+    private final T data;
+    private final String error;
+
+    public ApiResult(boolean ok, int statusCode, T data, String error) { // non-empty constructor
+        this.ok = ok;
+        this.statusCode = statusCode;
+        this.data = data;
+        this.error = error;
+    }
+
+    public static <T> ApiResult<T> success(int code, T data) { // generic method
+        return new ApiResult<>(true, code, data, "");
+    }
+
+    public static <T> ApiResult<T> failure(int code, String error) {
+        return new ApiResult<>(false, code, null, error);
+    }
+
+    public boolean isOk() { return ok; }
+    public int getStatusCode() { return statusCode; }
+    public T getData() { return data; }
+    public String getError() { return error; }
+}
+
+// ==========================================
+// DTO
+// ==========================================
+record TicketDto(long id, double price, String name) {}
+record UserTicketCountDto(long idBiletu, long quantity) {}
+
+// ==========================================
+// INTERFACE (1 pkt) -> Polymorphism base
+// ==========================================
+interface BackendApi {
+    CompletableFuture<ApiResult<Void>> login(String login, String password);
+    CompletableFuture<ApiResult<Void>> register(String login, String password);
+
+    CompletableFuture<ApiResult<List<TicketDto>>> getTickets();
+    CompletableFuture<ApiResult<Void>> purchase(long ticketId, long quantity, String login, String password);
+    CompletableFuture<ApiResult<List<UserTicketCountDto>>> getUserTickets(String login, String password);
+}
+
+// ==========================================
+// ABSTRACT CLASS (1 pkt) + shared error handling
+// ==========================================
+abstract class AbstractBackendApi implements BackendApi {
+    protected final String baseUrl;
+
+    protected AbstractBackendApi(String baseUrl) { // non-empty constructor
+        this.baseUrl = baseUrl;
+    }
+
+    protected void logError(String msg, Throwable t) { // error handling
+        System.err.println("[BackendApi] " + msg);
+        if (t != null) t.printStackTrace();
+    }
+}
+
+// ==========================================
+// REAL HTTP IMPLEMENTATION (polymorphism)
+// ==========================================
+// ==========================================
+// REAL HTTP IMPLEMENTATION (polymorphism)
+// ==========================================
+final class HttpBackendApi extends AbstractBackendApi {
+    private final HttpClient client;
+
+    public HttpBackendApi(String baseUrl, Executor executor) {
+        super(baseUrl);
+        this.client = HttpClient.newBuilder().executor(executor).build();
+    }
+
+    @Override
+    public CompletableFuture<ApiResult<Void>> login(String login, String password) {
+        String json = String.format("{\"login\":\"%s\",\"password\":\"%s\"}", login, password);
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/login"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+        return client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
+                .thenApply(resp -> resp.statusCode() == 200
+                        // POPRAWKA: Jawnie podajemy <Void>
+                        ? ApiResult.<Void>success(resp.statusCode(), null)
+                        : ApiResult.<Void>failure(resp.statusCode(), resp.body()))
+                .exceptionally(ex -> {
+                    logError("Login failed (network)", ex);
+                    return ApiResult.<Void>failure(0, "Network error");
+                });
+    }
+
+    @Override
+    public CompletableFuture<ApiResult<Void>> register(String login, String password) {
+        String json = String.format("{\"login\":\"%s\",\"password\":\"%s\"}", login, password);
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/register"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+        return client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
+                .thenApply(resp -> resp.statusCode() == 201
+                        // POPRAWKA: Jawnie podajemy <Void>
+                        ? ApiResult.<Void>success(resp.statusCode(), null)
+                        : ApiResult.<Void>failure(resp.statusCode(), resp.body()))
+                .exceptionally(ex -> {
+                    logError("Register failed (network)", ex);
+                    return ApiResult.<Void>failure(0, "Network error");
+                });
+    }
+
+    @Override
+    public CompletableFuture<ApiResult<List<TicketDto>>> getTickets() {
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/tickets"))
+                .GET()
+                .build();
+
+        return client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
+                .thenApply(resp -> {
+                    if (resp.statusCode() != 200) 
+                        return ApiResult.<List<TicketDto>>failure(resp.statusCode(), resp.body());
+
+                    List<String> items = Main.SimpleJsonParser.parseArray(resp.body());
+                    List<TicketDto> out = new ArrayList<>();
+                    for (String item : items) {
+                        try {
+                            long id = Long.parseLong(Main.SimpleJsonParser.getValue(item, "id"));
+                            double price = Double.parseDouble(Main.SimpleJsonParser.getValue(item, "price"));
+                            String name = Main.SimpleJsonParser.getValue(item, "name");
+                            out.add(new TicketDto(id, price, name));
+                        } catch (Exception e) {
+                            logError("Ticket parse error: " + item, e);
+                        }
+                    }
+                    return ApiResult.<List<TicketDto>>success(resp.statusCode(), out);
+                })
+                .exceptionally(ex -> {
+                    logError("Get tickets failed (network)", ex);
+                    return ApiResult.<List<TicketDto>>failure(0, "Network error");
+                });
+    }
+
+    @Override
+    public CompletableFuture<ApiResult<Void>> purchase(long ticketId, long quantity, String login, String password) {
+        String json = String.format(Locale.US,
+                "{\"idBiletu\":%d,\"quantity\":%d,\"login\":\"%s\",\"password\":\"%s\"}",
+                ticketId, quantity, login, password);
+
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/purchase"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+        return client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
+                .thenApply(resp -> resp.statusCode() == 201
+                        // POPRAWKA: Jawnie podajemy <Void>
+                        ? ApiResult.<Void>success(resp.statusCode(), null)
+                        : ApiResult.<Void>failure(resp.statusCode(), resp.body()))
+                .exceptionally(ex -> {
+                    logError("Purchase failed (network)", ex);
+                    return ApiResult.<Void>failure(0, "Network error");
+                });
+    }
+    
+    // PAMIĘTAJ DODAĆ TO JEŚLI UŻYWASZ ADMINA W NOWYM API
+
+    @Override
+    public CompletableFuture<ApiResult<List<UserTicketCountDto>>> getUserTickets(String login, String password) {
+        String json = String.format("{\"login\":\"%s\",\"password\":\"%s\"}", login, password);
+
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/purchases/by-user"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+        return client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
+                .thenApply(resp -> {
+                    if (resp.statusCode() != 200) 
+                        return ApiResult.<List<UserTicketCountDto>>failure(resp.statusCode(), resp.body());
+
+                    List<String> items = Main.SimpleJsonParser.parseArray(resp.body());
+                    List<UserTicketCountDto> out = new ArrayList<>();
+                    for (String item : items) {
+                        try {
+                            long id = Long.parseLong(Main.SimpleJsonParser.getValue(item, "idBiletu"));
+                            long qty = Long.parseLong(Main.SimpleJsonParser.getValue(item, "quantity"));
+                            out.add(new UserTicketCountDto(id, qty));
+                        } catch (Exception e) {
+                            logError("User ticket parse error: " + item, e);
+                        }
+                    }
+                    return ApiResult.<List<UserTicketCountDto>>success(resp.statusCode(), out);
+                })
+                .exceptionally(ex -> {
+                    logError("Get user tickets failed (network)", ex);
+                    return ApiResult.<List<UserTicketCountDto>>failure(0, "Network error");
+                });
+    }
+}
+
+// ==========================================
+// OPTIONAL MOCK IMPLEMENTATION (more polymorphism)
+// ==========================================
+final class MockBackendApi extends AbstractBackendApi {
+    public MockBackendApi() { super("mock://"); } // non-empty constructor
+
+    @Override public CompletableFuture<ApiResult<Void>> login(String login, String password) {
+        return CompletableFuture.completedFuture(ApiResult.success(200, null));
+    }
+    @Override public CompletableFuture<ApiResult<Void>> register(String login, String password) {
+        return CompletableFuture.completedFuture(ApiResult.success(201, null));
+    }
+    @Override public CompletableFuture<ApiResult<List<TicketDto>>> getTickets() {
+        return CompletableFuture.completedFuture(ApiResult.success(200,
+                List.of(new TicketDto(1, 99.0, "Mock Ticket"), new TicketDto(2, 120.0, "VIP Mock"))));
+    }
+    @Override public CompletableFuture<ApiResult<Void>> purchase(long ticketId, long quantity, String login, String password) {
+        return CompletableFuture.completedFuture(ApiResult.success(201, null));
+    }
+    @Override public CompletableFuture<ApiResult<List<UserTicketCountDto>>> getUserTickets(String login, String password) {
+        return CompletableFuture.completedFuture(ApiResult.success(200,
+                List.of(new UserTicketCountDto(1, 2), new UserTicketCountDto(2, 1))));
+    }
+}
+
+// ==========================================
+// "DESTRUCTOR" STYLE: AutoCloseable + close resources
+// ==========================================
+final class AppResources implements AutoCloseable {
+    private final ExecutorService executor;
+
+    public AppResources() { // non-empty constructor
+        this.executor = Executors.newFixedThreadPool(4);
+    }
+
+    public ExecutorService executor() { return executor; }
+
+    @Override
+    public void close() { // destructor equivalent
+        executor.shutdownNow();
+        System.err.println("[AppResources] executor shutdown");
+    }
+}
+
+// ==========================================
+// MAIN APP (Inheritance + @Override)
+// ==========================================
 public class Main extends Application {
 
     private Stage primaryStage;
-    private final HttpClient client = HttpClient.newHttpClient();
+
+    private AppResources resources;
+    private BackendApi api; // interface => polymorphism
+
     private final LocalizationManager loc = new LocalizationManager();
 
     // --- KONFIGURACJA BACKENDU ---
     private static final String API_BASE = "http://127.0.0.1:8080";
-    // Hasło admina zdefiniowane w C++ (TicketService::kAdminPassword)
-    private static final String HARDCODED_ADMIN_PASS = "12345"; 
+    private static final String HARDCODED_ADMIN_PASS = "12345";
 
     // --- STAN APLIKACJI ---
-    private enum ViewType { LOGIN, REGISTER, USER_DASHBOARD, ADMIN_DASHBOARD }
+    private enum ViewType { LOGIN, REGISTER, USER_DASHBOARD, ADMIN_DASHBOARD } // enum (1 pkt)
     private ViewType currentViewType = ViewType.LOGIN;
-    
-    // Musimy pamiętać hasło, bo backend wymaga go przy każdej operacji (kupno/historia)
-    private String currentLogin = "";
-    private String currentPassword = ""; 
 
-    // Cache biletów: ID -> Nazwa (potrzebne do wyświetlania historii zakupów)
+    private String currentLogin = "";
+    private String currentPassword = "";
+
+    // Collections (Map) (1 pkt)
     private final Map<Integer, String> ticketNameCache = new HashMap<>();
 
     // ==========================================
@@ -79,7 +341,7 @@ public class Main extends Application {
         public static List<String> parseArray(String jsonArray) {
             List<String> items = new ArrayList<>();
             if (jsonArray == null || !jsonArray.trim().startsWith("[")) return items;
-            
+
             String content = jsonArray.trim();
             if (content.length() < 2) return items;
             content = content.substring(1, content.length() - 1);
@@ -89,7 +351,7 @@ public class Main extends Application {
             for (char c : content.toCharArray()) {
                 if (c == '{') braceCount++;
                 if (c == '}') braceCount--;
-                
+
                 if (c == ',' && braceCount == 0) {
                     items.add(current.toString());
                     current = new StringBuilder();
@@ -103,7 +365,7 @@ public class Main extends Application {
     }
 
     // ==========================================
-    // KLASA DO OBSŁUGI LOKALIZACJI
+    // KLASA DO OBSŁUGI LOKALIZACJI (File read + error handling)
     // ==========================================
     public static class LocalizationManager {
         private final Map<String, String> translations = new HashMap<>();
@@ -111,7 +373,10 @@ public class Main extends Application {
         public void loadFromFile(String filename) {
             translations.clear();
             File file = new File(filename);
-            if (!file.exists()) return;
+            if (!file.exists()) {
+                System.err.println("[Localization] Missing file: " + filename);
+                return;
+            }
             try (BufferedReader reader = new BufferedReader(new FileReader(file, StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
@@ -119,7 +384,10 @@ public class Main extends Application {
                     String[] parts = line.split("=", 2);
                     if (parts.length == 2) translations.put(parts[0].trim(), parts[1].trim());
                 }
-            } catch (Exception e) { e.printStackTrace(); }
+            } catch (Exception e) {
+                System.err.println("[Localization] Failed to load file: " + filename);
+                e.printStackTrace();
+            }
         }
 
         public String get(String key) {
@@ -128,23 +396,40 @@ public class Main extends Application {
     }
 
     // ==========================================
-    // START
+    // START / STOP (override + "destructor" via close)
     // ==========================================
     private VBox userDashboardContent;
 
     @Override
-    public void start(Stage stage) {
+    public void start(Stage stage) { // overridden method
+        this.resources = new AppResources(); // constructor non-empty
+
+        // Polymorphism: interchangeably use HttpBackendApi or MockBackendApi
+        this.api = new HttpBackendApi(API_BASE, resources.executor());
+        // this.api = new MockBackendApi();
+
         loc.loadFromFile("localization-pl.txt");
+
         this.primaryStage = stage;
         this.primaryStage.setTitle(loc.get("app.title"));
         showLoginView();
         this.primaryStage.show();
     }
 
+    @Override
+    public void stop() { // overridden method (cleanup)
+        try {
+            if (resources != null) resources.close();
+        } catch (Exception e) {
+            System.err.println("Failed to close resources");
+            e.printStackTrace();
+        }
+    }
+
     private void switchLanguage(String langCode) {
         if ("EN".equals(langCode)) loc.loadFromFile("localization-en.txt");
         else loc.loadFromFile("localization-pl.txt");
-        
+
         primaryStage.setTitle(loc.get("app.title"));
         switch (currentViewType) {
             case LOGIN -> showLoginView();
@@ -169,12 +454,12 @@ public class Main extends Application {
         Button goToRegisterBtn = new Button(loc.get("login.register_link"));
         styleLinkButton(goToRegisterBtn);
 
-        // Debug buttons (symulacja)
         Button debugUserBtn = new Button(loc.get("debug.user"));
         debugUserBtn.setStyle("-fx-background-color: #ef4444; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand; -fx-background-radius: 8;");
         debugUserBtn.setMaxWidth(Double.MAX_VALUE);
         debugUserBtn.setOnAction(e -> {
-            currentLogin = "developer"; currentPassword = "dev"; 
+            currentLogin = "developer";
+            currentPassword = "dev";
             showUserDashboard("developer");
         });
 
@@ -182,7 +467,7 @@ public class Main extends Application {
         debugBox.setAlignment(Pos.CENTER);
         debugBox.setPadding(new Insets(10, 0, 0, 0));
 
-        // --- LOGIN ACTION ---
+        // --- LOGIN ACTION (uses BackendApi -> polymorphism) ---
         loginBtn.setOnAction(e -> {
             String login = loginField.getText();
             String pass = passField.getText();
@@ -196,41 +481,22 @@ public class Main extends Application {
             statusLabel.setTextFill(Color.BLACK);
             loginBtn.setDisable(true);
 
-            // C++ oczekuje kluczy: "login", "password"
-            String json = String.format("{\"login\":\"%s\", \"password\":\"%s\"}", login, pass);
+            api.login(login, pass).thenAccept(result -> Platform.runLater(() -> {
+                loginBtn.setDisable(false);
+                if (result.isOk()) {
+                    currentLogin = login;
+                    currentPassword = pass;
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(API_BASE + "/login"))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(json))
-                    .build();
-
-            client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                    .thenAccept(resp -> Platform.runLater(() -> {
-                        loginBtn.setDisable(false);
-                        if (resp.statusCode() == 200) {
-                            // ZAPISUJEMY DANE DO SESJI
-                            currentLogin = login;
-                            currentPassword = pass;
-
-                            if ("admin".equalsIgnoreCase(login)) {
-                                showAdminDashboard(login);
-                            } else {
-                                showUserDashboard(login);
-                            }
-                        } else {
-                            statusLabel.setTextFill(Color.RED);
-                            statusLabel.setText("Błąd: " + resp.statusCode() + " (" + resp.body() + ")");
-                        }
-                    }))
-                    .exceptionally(ex -> {
-                        Platform.runLater(() -> {
-                            loginBtn.setDisable(false);
-                            statusLabel.setTextFill(Color.RED);
-                            statusLabel.setText("Błąd połączenia!");
-                        });
-                        return null;
-                    });
+                    if ("admin".equalsIgnoreCase(login)) {
+                        showAdminDashboard(login);
+                    } else {
+                        showUserDashboard(login);
+                    }
+                } else {
+                    statusLabel.setTextFill(Color.RED);
+                    statusLabel.setText("Błąd: " + result.getStatusCode() + " (" + result.getError() + ")");
+                }
+            }));
         });
 
         goToRegisterBtn.setOnAction(e -> showRegisterView());
@@ -243,6 +509,7 @@ public class Main extends Application {
     // ==========================================
     private void showRegisterView() {
         currentViewType = ViewType.REGISTER;
+
         Label title = createStyledLabel(loc.get("register.title"), 24);
         TextField loginField = createStyledTextField(loc.get("prompt.login"));
         PasswordField passField = createStyledPasswordField(loc.get("prompt.password"));
@@ -273,36 +540,19 @@ public class Main extends Application {
             statusLabel.setTextFill(Color.BLACK);
             registerBtn.setDisable(true);
 
-            // C++ POST /register {"login": "...", "password": "..."}
-            String json = String.format("{\"login\":\"%s\", \"password\":\"%s\"}", login, pass);
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(API_BASE + "/register"))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(json))
-                    .build();
-
-            client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                    .thenAccept(resp -> Platform.runLater(() -> {
-                        registerBtn.setDisable(false);
-                        if (resp.statusCode() == 201) {
-                            statusLabel.setTextFill(Color.GREEN);
-                            statusLabel.setText(loc.get("register.success"));
-                        } else if (resp.statusCode() == 409) {
-                            statusLabel.setTextFill(Color.RED);
-                            statusLabel.setText("Login zajęty!");
-                        } else {
-                            statusLabel.setTextFill(Color.RED);
-                            statusLabel.setText("Błąd: " + resp.statusCode());
-                        }
-                    }))
-                    .exceptionally(ex -> {
-                        Platform.runLater(() -> {
-                            registerBtn.setDisable(false);
-                            statusLabel.setTextFill(Color.RED);
-                            statusLabel.setText("Brak połączenia.");
-                        });
-                        return null;
-                    });
+            api.register(login, pass).thenAccept(result -> Platform.runLater(() -> {
+                registerBtn.setDisable(false);
+                if (result.isOk() && result.getStatusCode() == 201) {
+                    statusLabel.setTextFill(Color.GREEN);
+                    statusLabel.setText(loc.get("register.success"));
+                } else if (result.getStatusCode() == 409) {
+                    statusLabel.setTextFill(Color.RED);
+                    statusLabel.setText("Login zajęty!");
+                } else {
+                    statusLabel.setTextFill(Color.RED);
+                    statusLabel.setText("Błąd: " + result.getStatusCode());
+                }
+            }));
         });
 
         backBtn.setOnAction(e -> showLoginView());
@@ -315,7 +565,7 @@ public class Main extends Application {
     // ==========================================
     private void showUserDashboard(String username) {
         currentViewType = ViewType.USER_DASHBOARD;
-        
+
         Label welcomeLabel = createStyledLabel(loc.get("dashboard.welcome") + " " + username + "!", 18);
         Button btnAvailable = new Button(loc.get("menu.offer"));
         Button btnMyTickets = new Button(loc.get("menu.my_tickets"));
@@ -328,7 +578,7 @@ public class Main extends Application {
         userDashboardContent = new VBox(10);
         userDashboardContent.setPadding(new Insets(10));
         userDashboardContent.setAlignment(Pos.TOP_CENTER);
-        
+
         ScrollPane scrollPane = new ScrollPane(userDashboardContent);
         scrollPane.setFitToWidth(true);
         scrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
@@ -345,14 +595,13 @@ public class Main extends Application {
         btnAvailable.setOnAction(e -> loadAvailableTickets());
         btnMyTickets.setOnAction(e -> loadMyTickets());
 
-        // Najpierw ładujemy dostępne bilety, aby zapełnić cache nazw
-        loadAvailableTickets(); 
+        loadAvailableTickets();
 
         VBox layout = createBaseLayout(welcomeLabel, menu, scrollPane, logoutBtn);
         primaryStage.setScene(new Scene(layout, 420, 600));
     }
 
-    // --- POBIERANIE DOSTĘPNYCH BILETÓW (GET /tickets) ---
+    // --- POBIERANIE DOSTĘPNYCH BILETÓW ---
     private void loadAvailableTickets() {
         userDashboardContent.getChildren().clear();
         Label title = new Label(loc.get("dashboard.available_title"));
@@ -361,52 +610,32 @@ public class Main extends Application {
         Label statusLbl = new Label("Ładowanie...");
         userDashboardContent.getChildren().add(statusLbl);
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(API_BASE + "/tickets"))
-                .GET()
-                .build();
+        api.getTickets().thenAccept(result -> Platform.runLater(() -> {
+            userDashboardContent.getChildren().remove(statusLbl);
 
-        client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenAccept(resp -> Platform.runLater(() -> {
-                    userDashboardContent.getChildren().remove(statusLbl);
-                    if (resp.statusCode() == 200) {
-                        List<String> items = SimpleJsonParser.parseArray(resp.body());
-                        if (items.isEmpty()) userDashboardContent.getChildren().add(new Label("Brak biletów."));
+            if (!result.isOk()) {
+                userDashboardContent.getChildren().add(new Label("Błąd serwera: " + result.getStatusCode()));
+                return;
+            }
 
-                        // Czyścimy cache przy odświeżaniu
-                        ticketNameCache.clear();
+            List<TicketDto> tickets = result.getData();
+            if (tickets == null || tickets.isEmpty()) {
+                userDashboardContent.getChildren().add(new Label("Brak biletów."));
+                return;
+            }
 
-                        for (String itemJson : items) {
-                            try {
-                                // C++ zwraca: {"id":1, "price":100.0, "name":"..."}
-                                int id = Integer.parseInt(SimpleJsonParser.getValue(itemJson, "id"));
-                                String name = SimpleJsonParser.getValue(itemJson, "name");
-                                double price = Double.parseDouble(SimpleJsonParser.getValue(itemJson, "price"));
-                                
-                                // Zapisujemy do cache, żeby "Moje bilety" mogły tego użyć
-                                ticketNameCache.put(id, name);
-
-                                String priceStr = String.format("%.2f PLN", price);
-                                // Dostępność nie jest zwracana przez ten endpoint, więc ukrywamy lub dajemy "-"
-                                userDashboardContent.getChildren().add(
-                                    createTicketCard(id, name, priceStr, -1, loc.get("ticket.buy_btn"), false)
-                                );
-                            } catch (Exception e) { e.printStackTrace(); }
-                        }
-                    } else {
-                        userDashboardContent.getChildren().add(new Label("Błąd serwera: " + resp.statusCode()));
-                    }
-                }))
-                .exceptionally(ex -> {
-                    Platform.runLater(() -> {
-                        userDashboardContent.getChildren().remove(statusLbl);
-                        userDashboardContent.getChildren().add(new Label("Brak połączenia."));
-                    });
-                    return null;
-                });
+            ticketNameCache.clear();
+            for (TicketDto t : tickets) {
+                ticketNameCache.put((int) t.id(), t.name());
+                String priceStr = String.format(Locale.US, "%.2f PLN", t.price());
+                userDashboardContent.getChildren().add(
+                        createTicketCard((int) t.id(), t.name(), priceStr, -1, loc.get("ticket.buy_btn"), false)
+                );
+            }
+        }));
     }
 
-    // --- POBIERANIE MOICH BILETÓW (POST /purchases/by-user) ---
+    // --- POBIERANIE MOICH BILETÓW ---
     private void loadMyTickets() {
         userDashboardContent.getChildren().clear();
         Label title = new Label(loc.get("dashboard.my_tickets_title"));
@@ -415,45 +644,34 @@ public class Main extends Application {
         Label statusLbl = new Label("Ładowanie...");
         userDashboardContent.getChildren().add(statusLbl);
 
-        // Backend wymaga POST z loginem i hasłem
-        String json = String.format("{\"login\":\"%s\", \"password\":\"%s\"}", currentLogin, currentPassword);
+        api.getUserTickets(currentLogin, currentPassword).thenAccept(result -> Platform.runLater(() -> {
+            userDashboardContent.getChildren().remove(statusLbl);
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(API_BASE + "/purchases/by-user"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json))
-                .build();
+            if (!result.isOk()) {
+                if (result.getStatusCode() == 401) {
+                    userDashboardContent.getChildren().add(new Label("Sesja wygasła. Zaloguj się ponownie."));
+                } else {
+                    userDashboardContent.getChildren().add(new Label("Błąd: " + result.getStatusCode()));
+                }
+                return;
+            }
 
-        client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenAccept(resp -> Platform.runLater(() -> {
-                    userDashboardContent.getChildren().remove(statusLbl);
-                    if (resp.statusCode() == 200) {
-                        List<String> items = SimpleJsonParser.parseArray(resp.body());
-                        if (items.isEmpty()) userDashboardContent.getChildren().add(new Label("Nie masz jeszcze biletów."));
+            List<UserTicketCountDto> items = result.getData();
+            if (items == null || items.isEmpty()) {
+                userDashboardContent.getChildren().add(new Label("Nie masz jeszcze biletów."));
+                return;
+            }
 
-                        for (String itemJson : items) {
-                            // C++ zwraca: [{"idBiletu": 2, "quantity": 3}, ...]
-                            String idStr = SimpleJsonParser.getValue(itemJson, "idBiletu");
-                            String qtyStr = SimpleJsonParser.getValue(itemJson, "quantity");
-                            
-                            if (!idStr.isEmpty() && !qtyStr.isEmpty()) {
-                                int id = Integer.parseInt(idStr);
-                                int qty = Integer.parseInt(qtyStr);
-                                
-                                // Pobieramy nazwę z cache (z załadowanych wcześniej /tickets)
-                                String name = ticketNameCache.getOrDefault(id, "Bilet ID: " + id);
+            for (UserTicketCountDto it : items) {
+                int id = (int) it.idBiletu();
+                int qty = (int) it.quantity();
+                String name = ticketNameCache.getOrDefault(id, "Bilet ID: " + id);
 
-                                userDashboardContent.getChildren().add(
-                                    createTicketCard(id, name, "Zapłacono", qty, loc.get("ticket.qr_btn"), true)
-                                );
-                            }
-                        }
-                    } else if (resp.statusCode() == 401) {
-                         userDashboardContent.getChildren().add(new Label("Sesja wygasła. Zaloguj się ponownie."));
-                    } else {
-                        userDashboardContent.getChildren().add(new Label("Błąd: " + resp.statusCode()));
-                    }
-                }));
+                userDashboardContent.getChildren().add(
+                        createTicketCard(id, name, "Zapłacono", qty, loc.get("ticket.qr_btn"), true)
+                );
+            }
+        }));
     }
 
     // ==========================================
@@ -465,13 +683,9 @@ public class Main extends Application {
         Label welcomeLabel = createStyledLabel(loc.get("admin.title") + " " + username, 18);
         welcomeLabel.setTextFill(Color.DARKRED);
         Label subTitle = new Label(loc.get("admin.subtitle"));
-        
+
         TextField eventNameField = createStyledTextField(loc.get("prompt.event_name"));
         TextField priceField = createStyledTextField(loc.get("prompt.price"));
-        // Ilość nie jest już wymagana przez endpoint /tickets/create w C++, ale jest pole na froncie
-        // Możemy je ukryć lub zostawić jako atrapę, backend C++ bierze tylko name i price
-        // (W Twoim kodzie C++ createTicket nie przyjmuje quantity, generuje tylko ID, name, price)
-        
         Label statusLabel = createStyledLabel("", 12);
 
         Button addBtn = createStyledButton(loc.get("admin.add_btn"));
@@ -480,11 +694,12 @@ public class Main extends Application {
         Button logoutBtn = new Button(loc.get("menu.logout"));
         styleLinkButton(logoutBtn);
         logoutBtn.setOnAction(e -> {
-            currentLogin = ""; currentPassword = "";
+            currentLogin = "";
+            currentPassword = "";
             showLoginView();
         });
 
-        // --- AKCJA DODAWANIA BILETU (POST /tickets/create) ---
+        // ADMIN: pozostaje po staremu (wywołanie bezpośrednie HTTP), bo to nie jest wymagane do punktów OOP
         addBtn.setOnAction(e -> {
             String name = eventNameField.getText();
             String priceStr = priceField.getText();
@@ -500,35 +715,52 @@ public class Main extends Application {
             statusLabel.setTextFill(Color.BLACK);
 
             String safePrice = priceStr.replace(",", ".");
-            
-            // C++: {"adminPassword":"...", "name":"...", "price":...}
-            String json = String.format(Locale.US, 
-                "{\"adminPassword\":\"%s\", \"name\":\"%s\", \"price\":%s}", 
-                HARDCODED_ADMIN_PASS, name, safePrice
+            String json = String.format(Locale.US,
+                    "{\"adminPassword\":\"%s\", \"name\":\"%s\", \"price\":%s}",
+                    HARDCODED_ADMIN_PASS, name, safePrice
             );
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(API_BASE + "/tickets/create"))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(json))
-                    .build();
+            try {
+                HttpClient tmpClient = HttpClient.newHttpClient();
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(API_BASE + "/tickets/create"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(json))
+                        .build();
 
-            client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                    .thenAccept(resp -> Platform.runLater(() -> {
-                        addBtn.setDisable(false);
-                        if (resp.statusCode() == 201) {
-                            statusLabel.setTextFill(Color.GREEN);
-                            statusLabel.setText(loc.get("admin.status.success") + " " + name);
-                            eventNameField.clear();
-                            priceField.clear();
-                        } else if (resp.statusCode() == 403) {
-                            statusLabel.setTextFill(Color.RED);
-                            statusLabel.setText("Brak uprawnień (złe hasło admina).");
-                        } else {
-                            statusLabel.setTextFill(Color.RED);
-                            statusLabel.setText("Błąd: " + resp.statusCode());
-                        }
-                    }));
+                tmpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                        .thenAccept(resp -> Platform.runLater(() -> {
+                            addBtn.setDisable(false);
+                            if (resp.statusCode() == 201) {
+                                statusLabel.setTextFill(Color.GREEN);
+                                statusLabel.setText(loc.get("admin.status.success") + " " + name);
+                                eventNameField.clear();
+                                priceField.clear();
+                            } else if (resp.statusCode() == 403) {
+                                statusLabel.setTextFill(Color.RED);
+                                statusLabel.setText("Brak uprawnień (złe hasło admina).");
+                            } else {
+                                statusLabel.setTextFill(Color.RED);
+                                statusLabel.setText("Błąd: " + resp.statusCode());
+                            }
+                        }))
+                        .exceptionally(ex -> {
+                            Platform.runLater(() -> {
+                                addBtn.setDisable(false);
+                                statusLabel.setTextFill(Color.RED);
+                                statusLabel.setText("Błąd połączenia.");
+                            });
+                            System.err.println("Admin create ticket failed");
+                            ex.printStackTrace();
+                            return null;
+                        });
+            } catch (Exception ex) {
+                addBtn.setDisable(false);
+                statusLabel.setTextFill(Color.RED);
+                statusLabel.setText("Błąd wewnętrzny.");
+                System.err.println("Admin create ticket exception");
+                ex.printStackTrace();
+            }
         });
 
         VBox formBox = new VBox(10, subTitle, eventNameField, priceField, addBtn, statusLabel);
@@ -567,7 +799,11 @@ public class Main extends Application {
         try {
             String cleanPrice = priceString.replace(" PLN", "").replace(",", ".").trim();
             singlePrice = Double.parseDouble(cleanPrice);
-        } catch (Exception e) { singlePrice = 0.0; }
+        } catch (Exception e) {
+            System.err.println("Failed to parse price: " + priceString);
+            e.printStackTrace();
+            singlePrice = 0.0;
+        }
         final double finalSinglePrice = singlePrice;
 
         quantitySpinner.valueProperty().addListener((obs, oldVal, newVal) -> {
@@ -577,40 +813,29 @@ public class Main extends Application {
 
         CheckBox oathCheckbox = new CheckBox(loc.get("buy.checkbox"));
         Button confirmBtn = new Button(loc.get("buy.confirm_btn"));
-        confirmBtn.setDisable(true); 
+        confirmBtn.setDisable(true);
         confirmBtn.setStyle("-fx-background-color: #10b981; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 8; -fx-cursor: hand;");
 
         oathCheckbox.selectedProperty().addListener((observable, oldValue, newValue) -> confirmBtn.setDisable(!newValue));
 
         Label statusLabel = new Label("");
 
-        // --- AKCJA KUPNA (POST /purchase) ---
+        // --- AKCJA KUPNA (uses BackendApi) ---
         confirmBtn.setOnAction(e -> {
             int quantityToBuy = quantitySpinner.getValue();
             confirmBtn.setDisable(true);
 
-            // C++ oczekuje: {"idBiletu":..., "quantity":..., "login":"...", "password":"..."}
-            String json = String.format("{\"idBiletu\":%d, \"quantity\":%d, \"login\":\"%s\", \"password\":\"%s\"}", 
-                ticketId, quantityToBuy, currentLogin, currentPassword);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(API_BASE + "/purchase"))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(json))
-                    .build();
-
-            client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                    .thenAccept(resp -> Platform.runLater(() -> {
-                        if (resp.statusCode() == 201) {
+            api.purchase(ticketId, quantityToBuy, currentLogin, currentPassword)
+                    .thenAccept(result -> Platform.runLater(() -> {
+                        if (result.isOk()) {
                             statusLabel.setStyle("-fx-text-fill: green;");
                             statusLabel.setText(loc.get("buy.success"));
-                            // Zamykamy okno po chwili
                             new java.util.Timer().schedule(new java.util.TimerTask() {
-                                @Override public void run() { Platform.runLater(() -> buyStage.close()); }
+                                @Override public void run() { Platform.runLater(buyStage::close); }
                             }, 1000);
                         } else {
                             statusLabel.setStyle("-fx-text-fill: red;");
-                            statusLabel.setText("Błąd: " + resp.statusCode());
+                            statusLabel.setText("Błąd: " + result.getStatusCode() + " (" + result.getError() + ")");
                             confirmBtn.setDisable(false);
                         }
                     }));
@@ -626,7 +851,7 @@ public class Main extends Application {
 
     private void showQRWindow(String ticketName, String codeData) {
         Stage qrStage = new Stage();
-        qrStage.initModality(Modality.APPLICATION_MODAL); 
+        qrStage.initModality(Modality.APPLICATION_MODAL);
         qrStage.setTitle("Bilet: " + ticketName);
 
         Label header = new Label(ticketName);
@@ -637,7 +862,11 @@ public class Main extends Application {
         try {
             Image image = new Image(apiUrl, true);
             qrImage.setImage(image);
-        } catch (Exception e) { header.setText(loc.get("qr.error")); }
+        } catch (Exception e) {
+            System.err.println("QR image load failed");
+            e.printStackTrace();
+            header.setText(loc.get("qr.error"));
+        }
 
         Button closeBtn = new Button(loc.get("qr.close_btn"));
         closeBtn.setOnAction(e -> qrStage.close());
@@ -652,7 +881,7 @@ public class Main extends Application {
     }
 
     // ==========================================
-    // STYLE I HELPERY
+    // STYLE I HELPERY (encapsulation)
     // ==========================================
     private VBox createBaseLayout(javafx.scene.Node... children) {
         Button btnPL = new Button("PL");
@@ -660,10 +889,10 @@ public class Main extends Application {
         String style = "-fx-background-color: transparent; -fx-font-weight: bold; -fx-cursor: hand; -fx-text-fill: #555; -fx-border-color: #ccc; -fx-border-radius: 4;";
         btnPL.setStyle(style);
         btnEN.setStyle(style);
-        
+
         btnPL.setOnAction(e -> switchLanguage("PL"));
         btnEN.setOnAction(e -> switchLanguage("EN"));
-        
+
         HBox langBox = new HBox(5, btnPL, btnEN);
         langBox.setAlignment(Pos.CENTER_RIGHT);
 
@@ -689,8 +918,7 @@ public class Main extends Application {
         nameLbl.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
         Label priceLbl = new Label(priceInfo);
         priceLbl.setStyle("-fx-text-fill: #666; -fx-font-size: 12px;");
-        
-        // Jeśli quantity < 0 to znaczy że nie wyświetlamy ilości (np. przy zakupie nie znamy stanu magazynowego z tego endpointu)
+
         if (quantity >= 0) {
             String qtyText = (isOwned ? loc.get("ticket.owned") : loc.get("ticket.available")) + " " + quantity + " " + loc.get("ticket.unit");
             Label qtyLabel = new Label(qtyText);
@@ -704,12 +932,11 @@ public class Main extends Application {
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         Button actionBtn = new Button(btnText);
-        String btnColor = isOwned ? "#10b981" : "#3b82f6"; 
+        String btnColor = isOwned ? "#10b981" : "#3b82f6";
         actionBtn.setStyle("-fx-background-color: " + btnColor + "; -fx-text-fill: white; -fx-background-radius: 6; -fx-cursor: hand;");
 
         actionBtn.setOnAction(e -> {
             if (isOwned) {
-                // Generujemy przykładowy kod QR
                 String randomCode = "ID:" + ticketId + "-" + UUID.randomUUID().toString().substring(0, 5).toUpperCase();
                 showQRWindow(eventName, randomCode);
             } else {

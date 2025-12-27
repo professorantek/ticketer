@@ -2,3 +2,10 @@
 2 1 antek
 3 1 antek
 4 1 antek
+5 1 antek
+6 1 antek
+7 1 antek
+8 3 antek
+9 3 antek
+10 3 antek
+11 3 antek
