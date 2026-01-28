@@ -1,4 +1,0 @@
-1 49.99 Koncert A
-2 79 Teatr B
-3 120.5 Festiwal C
-4 67.67 Sylwester z 6

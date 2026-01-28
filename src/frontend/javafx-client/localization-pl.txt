@@ -62,3 +62,39 @@ prompt.password_confirm=Powtórz hasło
 prompt.event_name=Nazwa wydarzenia
 prompt.price=Cena (np. 99.99)
 prompt.qty=Ilość biletów
+
+# ADMIN LOCAL LOGIN
+admin.link=Panel Administratora
+admin.login.title=Logowanie Administratora
+admin.login.header=Dostęp do panelu administratora
+admin.login.btn=Zaloguj
+admin.login.error=Błędne dane lokalne!
+
+# STATUSY I BŁĘDY OGÓLNE
+status.loading=Ładowanie...
+status.error=Błąd:
+status.server_error=Błąd serwera:
+status.session_expired=Sesja wygasła. Zaloguj się ponownie.
+status.no_data=Brak danych.
+error.fill_fields=Wypełnij pola!
+error.bad_price=Zła cena
+error.login_taken=Login zajęty!
+
+# DASHBOARD USER
+dashboard.no_tickets=Brak biletów.
+dashboard.no_owned=Nie masz jeszcze biletów.
+ticket.paid=Zapłacono
+ticket.fallback_name=Bilet ID:
+
+# ADMIN PANEL (ZARZĄDZANIE)
+admin.manage_title=Zarządzaj biletami:
+admin.list.empty=Brak biletów w bazie.
+admin.list.loading=Ładowanie listy...
+admin.list.error=Błąd pobierania listy.
+admin.btn.save=Zapisz
+admin.btn.delete=Usuń
+admin.confirm.delete=Czy na pewno usunąć bilet ID:
+admin.delete.success=Usunięto!
+admin.delete.error=Błąd usuwania:
+admin.update.success=Zaktualizowano!
+admin.update.error=Błąd aktualizacji:

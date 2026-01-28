@@ -62,3 +62,39 @@ prompt.password_confirm=Repeat password
 prompt.event_name=Event Name
 prompt.price=Price (e.g. 99.99)
 prompt.qty=Ticket Quantity
+
+# ADMIN LOCAL LOGIN
+admin.link=Admin Panel
+admin.login.title=Admin Login
+admin.login.header=Admin Panel Access
+admin.login.btn=Log in
+admin.login.error=Invalid local credentials!
+
+# STATUS & ERRORS
+status.loading=Loading...
+status.error=Error:
+status.server_error=Server error:
+status.session_expired=Session expired. Please log in again.
+status.no_data=No data.
+error.fill_fields=Fill all fields!
+error.bad_price=Invalid price format
+error.login_taken=Username taken!
+
+# DASHBOARD USER
+dashboard.no_tickets=No tickets available.
+dashboard.no_owned=You don't have any tickets yet.
+ticket.paid=Paid
+ticket.fallback_name=Ticket ID:
+
+# ADMIN PANEL (MANAGE)
+admin.manage_title=Manage Tickets:
+admin.list.empty=No tickets in database.
+admin.list.loading=Loading list...
+admin.list.error=List fetch error.
+admin.btn.save=Save
+admin.btn.delete=Delete
+admin.confirm.delete=Are you sure you want to delete ticket ID:
+admin.delete.success=Deleted!
+admin.delete.error=Delete error:
+admin.update.success=Updated!
+admin.update.error=Update error:
