@@ -6,7 +6,8 @@
 
 #ifndef UNIT_TESTS
 
-int main() {
+int main()
+{
     AppServer app("127.0.0.1", 8080);
     app.start();
     return 0;

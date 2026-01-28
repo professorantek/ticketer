@@ -14,7 +14,8 @@
 // + Polymorphism poprzez trzymanie obiektów przez interfejsy
 // + Dynamic allocation poprzez smart pointers
 // ======================================================
-class AppServer {
+class AppServer
+{
 public:
     AppServer(std::string host, int port);
     void start();

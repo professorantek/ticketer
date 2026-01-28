@@ -7,7 +7,8 @@
 // Wymóg: Parallel programming (std::thread)
 // - wątek diagnostyczny aplikacji, działający w tle
 // ======================================================
-class BackgroundWorker {
+class BackgroundWorker
+{
 public:
     BackgroundWorker();
     void start();

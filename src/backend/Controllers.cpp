@@ -4,11 +4,13 @@
 // ======================================================
 // AuthController
 // ======================================================
-AuthController::AuthController(AuthService& service)
+AuthController::AuthController(AuthService &service)
     : service_(service) {}
 
-void AuthController::registerRoutes(httplib::Server& server) {
-    server.Post("/register", [this](const httplib::Request& req, httplib::Response& res) {
+void AuthController::registerRoutes(httplib::Server &server)
+{
+    server.Post("/register", [this](const httplib::Request &req, httplib::Response &res)
+                {
         auto loginOpt = extractJsonStringField(req.body, "login");
         auto passOpt  = extractJsonStringField(req.body, "password");
         if (!loginOpt || !passOpt) {
@@ -28,10 +30,10 @@ void AuthController::registerRoutes(httplib::Server& server) {
                 res.status = 400; res.set_content("Invalid login or password (3-32 chars, no spaces)", "text/plain; charset=utf-8"); break;
             default:
                 res.status = 500; res.set_content("Storage error", "text/plain; charset=utf-8"); break;
-        }
-    });
+        } });
 
-    server.Post("/login", [this](const httplib::Request& req, httplib::Response& res) {
+    server.Post("/login", [this](const httplib::Request &req, httplib::Response &res)
+                {
         auto loginOpt = extractJsonStringField(req.body, "login");
         auto passOpt  = extractJsonStringField(req.body, "password");
         if (!loginOpt || !passOpt) {
@@ -51,10 +53,10 @@ void AuthController::registerRoutes(httplib::Server& server) {
                 res.status = 401; res.set_content("Invalid login or password", "text/plain; charset=utf-8"); break;
             default:
                 res.status = 500; res.set_content("Storage error", "text/plain; charset=utf-8"); break;
-        }
-    });
+        } });
 
-    server.Post("/user/get", [this](const httplib::Request& req, httplib::Response& res) {
+    server.Post("/user/get", [this](const httplib::Request &req, httplib::Response &res)
+                {
         auto loginOpt = extractJsonStringField(req.body, "login");
         auto passOpt  = extractJsonStringField(req.body, "password");
         if (!loginOpt || !passOpt) {
@@ -77,18 +79,19 @@ void AuthController::registerRoutes(httplib::Server& server) {
         json += "}";
 
         res.status = 200;
-        res.set_content(json, "application/json; charset=utf-8");
-    });
+        res.set_content(json, "application/json; charset=utf-8"); });
 }
 
 // ======================================================
 // TicketController
 // ======================================================
-TicketController::TicketController(TicketService& service)
+TicketController::TicketController(TicketService &service)
     : service_(service) {}
 
-void TicketController::registerRoutes(httplib::Server& server) {
-    server.Post("/tickets/create", [this](const httplib::Request& req, httplib::Response& res) {
+void TicketController::registerRoutes(httplib::Server &server)
+{
+    server.Post("/tickets/create", [this](const httplib::Request &req, httplib::Response &res)
+                {
         auto adminOpt = extractJsonStringField(req.body, "adminPassword");
         auto nameOpt  = extractJsonStringField(req.body, "name");
         auto priceOpt = extractJsonNumberField(req.body, "price");
@@ -114,10 +117,10 @@ void TicketController::registerRoutes(httplib::Server& server) {
                 res.status = 400; res.set_content("Invalid price or name", "text/plain; charset=utf-8"); break;
             default:
                 res.status = 500; res.set_content("Storage error", "text/plain; charset=utf-8"); break;
-        }
-    });
+        } });
 
-    server.Post("/tickets/delete", [this](const httplib::Request& req, httplib::Response& res) {
+    server.Post("/tickets/delete", [this](const httplib::Request &req, httplib::Response &res)
+                {
         auto adminOpt = extractJsonStringField(req.body, "adminPassword");
         auto idOpt    = extractJsonIntField(req.body, "id");
         if (!adminOpt || !idOpt) {
@@ -139,10 +142,10 @@ void TicketController::registerRoutes(httplib::Server& server) {
                 res.status = 400; res.set_content("Invalid id", "text/plain; charset=utf-8"); break;
             default:
                 res.status = 500; res.set_content("Storage error", "text/plain; charset=utf-8"); break;
-        }
-    });
+        } });
 
-    server.Post("/tickets/update", [this](const httplib::Request& req, httplib::Response& res) {
+    server.Post("/tickets/update", [this](const httplib::Request &req, httplib::Response &res)
+                {
         auto adminOpt = extractJsonStringField(req.body, "adminPassword");
         auto idOpt    = extractJsonIntField(req.body, "id");
         auto nameOpt  = extractJsonStringField(req.body, "name");
@@ -169,10 +172,10 @@ void TicketController::registerRoutes(httplib::Server& server) {
                 res.status = 400; res.set_content("Invalid id/price/name", "text/plain; charset=utf-8"); break;
             default:
                 res.status = 500; res.set_content("Storage error", "text/plain; charset=utf-8"); break;
-        }
-    });
+        } });
 
-    server.Get("/tickets", [this](const httplib::Request&, httplib::Response& res) {
+    server.Get("/tickets", [this](const httplib::Request &, httplib::Response &res)
+               {
         auto tickets = service_.getAllTickets();
 
         std::string json = "[";
@@ -187,10 +190,10 @@ void TicketController::registerRoutes(httplib::Server& server) {
         }
         json += "]";
         res.status = 200;
-        res.set_content(json, "application/json; charset=utf-8");
-    });
+        res.set_content(json, "application/json; charset=utf-8"); });
 
-    server.Get(R"(/tickets/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+    server.Get(R"(/tickets/(\d+))", [this](const httplib::Request &req, httplib::Response &res)
+               {
         long long id = 0;
         try { id = std::stoll(req.matches[1].str()); }
         catch (...) {
@@ -213,18 +216,19 @@ void TicketController::registerRoutes(httplib::Server& server) {
         json += "}";
 
         res.status = 200;
-        res.set_content(json, "application/json; charset=utf-8");
-    });
+        res.set_content(json, "application/json; charset=utf-8"); });
 }
 
 // ======================================================
 // PurchaseController
 // ======================================================
-PurchaseController::PurchaseController(PurchaseService& service)
+PurchaseController::PurchaseController(PurchaseService &service)
     : service_(service) {}
 
-void PurchaseController::registerRoutes(httplib::Server& server) {
-    server.Post("/purchase", [this](const httplib::Request& req, httplib::Response& res) {
+void PurchaseController::registerRoutes(httplib::Server &server)
+{
+    server.Post("/purchase", [this](const httplib::Request &req, httplib::Response &res)
+                {
         auto ticketIdOpt = extractJsonIntField(req.body, "idBiletu");
         auto qtyOpt      = extractJsonIntField(req.body, "quantity");
         auto loginOpt    = extractJsonStringField(req.body, "login");
@@ -249,10 +253,10 @@ void PurchaseController::registerRoutes(httplib::Server& server) {
                 res.status = 400; res.set_content("Invalid input", "text/plain; charset=utf-8"); break;
             default:
                 res.status = 500; res.set_content("Storage error", "text/plain; charset=utf-8"); break;
-        }
-    });
+        } });
 
-    server.Post("/purchases/by-user", [this](const httplib::Request& req, httplib::Response& res) {
+    server.Post("/purchases/by-user", [this](const httplib::Request &req, httplib::Response &res)
+                {
         auto loginOpt = extractJsonStringField(req.body, "login");
         auto passOpt  = extractJsonStringField(req.body, "password");
         if (!loginOpt || !passOpt) {
@@ -285,18 +289,17 @@ void PurchaseController::registerRoutes(httplib::Server& server) {
                 res.status = 400; res.set_content("Invalid input", "text/plain; charset=utf-8"); break;
             default:
                 res.status = 500; res.set_content("Storage error", "text/plain; charset=utf-8"); break;
-        }
-    });
+        } });
 }
 
 // ======================================================
 // RandomController
 // ======================================================
-RandomController::RandomController(RandomNumberService& service)
+RandomController::RandomController(RandomNumberService &service)
     : service_(service) {}
 
-void RandomController::registerRoutes(httplib::Server& server) {
-    server.Get("/random", [this](const httplib::Request&, httplib::Response& res) {
-        res.set_content(std::to_string(service_.generate()), "text/plain; charset=utf-8");
-    });
+void RandomController::registerRoutes(httplib::Server &server)
+{
+    server.Get("/random", [this](const httplib::Request &, httplib::Response &res)
+               { res.set_content(std::to_string(service_.generate()), "text/plain; charset=utf-8"); });
 }

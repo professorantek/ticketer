@@ -8,7 +8,8 @@
 #include <cassert>
 #include <iostream>
 
-static void run_tests() {
+static void run_tests()
+{
     {
         std::ofstream("users_test.txt", std::ios::trunc).close();
         std::ofstream("tickets_test.txt", std::ios::trunc).close();
@@ -55,7 +56,8 @@ static void run_tests() {
     std::cout << "All tests passed.\n";
 }
 
-int main() {
+int main()
+{
     run_tests();
     return 0;
 }
