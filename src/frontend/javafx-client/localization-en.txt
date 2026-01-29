@@ -10,7 +10,7 @@ register.btn=Create account
 register.back_btn=Back to login
 register.status.pass_mismatch=Passwords do not match!
 register.status.process=Creating account...
-register.success=Account created! (Simulation)
+register.success=Account created!
 
 # --- DEBUG ---
 debug.user=🛠 [DEBUG] Skip as USER

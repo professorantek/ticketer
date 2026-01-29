@@ -10,7 +10,7 @@ register.btn=Utwórz konto
 register.back_btn=Wróć do logowania
 register.status.pass_mismatch=Hasła nie są identyczne!
 register.status.process=Tworzenie konta...
-register.success=Konto utworzone! (Symulacja)
+register.success=Konto utworzone!
 
 # --- DEBUG ---
 debug.user=🛠 [DEBUG] Pomiń jako USER
